@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Personnel QR Check</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    :root {
+      --paper: #eef1ec;
+      --ink: #15231d;
+      --muted: #5b6b63;
+      --line: #c9d1ca;
+      --ok: #1b7a4b;
+      --ok-bg: #dcf1e3;
+      --bad: #b3261e;
+      --bad-bg: #f9dedc;
+      --btn: #15231d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 16px;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--paper); color: var(--ink);
+      display: flex; justify-content: center;
+    }
+    main { width: 100%; max-width: 440px; }
+    h1 { font-size: 1.25rem; margin: 4px 0 14px; }
+    #reader { width: 100%; border-radius: 10px; overflow: hidden; }
+    button {
+      display: block; width: 100%; margin: 12px 0;
+      padding: 16px 14px; font-size: 1.1rem; font-weight: 600;
+      border: 2px solid var(--btn); border-radius: 8px;
+      background: var(--btn); color: #fff; cursor: pointer;
+    }
+    button.secondary { background: transparent; color: var(--btn); width: auto; margin: 0; padding: 12px 16px; font-size: 1rem; }
+    button:focus-visible, input:focus-visible { outline: 3px solid #e0a100; outline-offset: 2px; }
+    form { display: flex; gap: 8px; margin: 12px 0; }
+    input[type=text], input[type=password] {
+      flex: 1; padding: 12px; font-size: 1rem;
+      border: 2px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink);
+    }
+    #result {
+      margin-top: 14px; padding: 20px 16px; border-radius: 10px;
+      border: 2px solid var(--line); background: #fff; text-align: center;
+    }
+    #result.ok { border-color: var(--ok); background: var(--ok-bg); }
+    #result.bad { border-color: var(--bad); background: var(--bad-bg); }
+    #verdict { font-size: 1.5rem; font-weight: 800; margin: 0 0 6px; }
+    #result.bad #verdict { color: var(--bad); }
+    #line1 { font-size: 1.4rem; font-weight: 800; margin: 0; line-height: 1.3; }
+    #line2 { font-size: 1.05rem; font-weight: 600; margin: 6px 0 0; }
+    .hint { color: var(--muted); font-size: .95rem; margin: 0; }
+    details { margin-top: 18px; color: var(--muted); font-size: .9rem; }
+    summary { cursor: pointer; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Personnel QR check</h1>
+
+  <div id="reader"></div>
+  <button id="startBtn" type="button">Start camera</button>
+
+  <form id="manualForm">
+    <input id="manualInput" type="text" placeholder="Or type a Serial" autocomplete="off" aria-label="Serial">
+    <button type="submit" class="secondary">Check</button>
+  </form>
+
+  <div id="result" aria-live="polite">
+    <p id="verdict">Ready to scan</p>
+    <p class="hint" id="detail">Tap "Start camera" and hold the QR code in the frame.</p>
+  </div>
+
+</main>
+
+<script>
+  // ====== SETTINGS ======
+  var API_URL = 'https://script.google.com/macros/s/AKfycbzAkFCIv7Kx2TaGQWYZrclCS0kSy0kDg4VP_48GBfaDzbbXBgeLvjHOBDqfkv0US1qH/exec'; // the URL ending in /exec
+  // ======================
+
+  var scanner = null;
+  var busy = false;
+
+  // The access key travels in the link itself: https://your-page/#k=THE_KEY
+  // so nobody has to type it. It is also remembered on the device as a backup.
+  function getPass() {
+    var m = /[#&]k=([^&]*)/.exec(location.hash);
+    if (m) {
+      var k = decodeURIComponent(m[1]);
+      try { localStorage.setItem('qrpass', k); } catch (e) {}
+      return k;
+    }
+    try { return localStorage.getItem('qrpass') || ''; } catch (e) { return ''; }
+  }
+
+  function clearResult() {
+    var box = document.getElementById('result');
+    box.innerHTML = '';
+    return box;
+  }
+  function addLine(box, id, text, cls) {
+    var p = document.createElement('p');
+    p.id = id; p.textContent = text;
+    if (cls) p.className = cls;
+    box.appendChild(p);
+  }
+  function showMessage(kind, verdict, detail) {
+    var box = clearResult();
+    box.className = kind || '';
+    addLine(box, 'verdict', verdict);
+    if (detail) addLine(box, 'detail', detail, 'hint');
+  }
+  function showFound(person) {
+    var box = clearResult();
+    box.className = 'ok';
+    var line1 = [person.Rank, person.Name, person.Serial, person.Branch]
+      .filter(function (v) { return v && String(v).trim(); })
+      .join(' ');
+    addLine(box, 'line1', line1);
+    if (person.Unit && String(person.Unit).trim()) addLine(box, 'line2', person.Unit);
+  }
+
+  function check(text) {
+    if (busy) return;
+    if (!getPass()) {
+      showMessage('bad', 'Access link needed', 'Open this page using the full access link you were given.');
+      return;
+    }
+    busy = true;
+    showMessage('', 'Checking…', text);
+    var url = API_URL + '?key=' + encodeURIComponent(getPass()) +
+              '&serial=' + encodeURIComponent(text);
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        busy = false;
+        if (!res.ok) {
+          showMessage('bad', 'Error', res.error || 'Lookup failed.');
+        } else if (res.found) {
+          showFound(res.person);
+        } else {
+          showMessage('bad', 'Not found', 'Serial ' + (res.serial || '(blank)') + ' is not in the list.');
+        }
+      })
+      .catch(function () {
+        busy = false;
+        showMessage('bad', 'Error', 'Could not reach the lookup service. Check your connection.');
+      });
+  }
+
+  function startCamera() {
+    if (!scanner) scanner = new Html5Qrcode('reader');
+    scanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 240, height: 240 } },
+      function (decodedText) {
+        if (busy) return;
+        stopCamera();
+        check(decodedText);
+      },
+      function () { /* no QR in this frame */ }
+    ).then(function () {
+      document.getElementById('startBtn').style.display = 'none';
+    }).catch(function () {
+      showMessage('bad', 'Camera unavailable',
+        'Allow camera access in your browser settings, then tap Start camera again.');
+    });
+  }
+
+  function stopCamera() {
+    if (scanner && scanner.isScanning) {
+      scanner.stop().then(function () {
+        var b = document.getElementById('startBtn');
+        b.textContent = 'Scan next';
+        b.style.display = 'block';
+      }).catch(function () {});
+    }
+  }
+
+  document.getElementById('startBtn').addEventListener('click', function () {
+    if (scanner && scanner.isScanning) return;
+    showMessage('', 'Scanning…', 'Hold the QR code inside the frame.');
+    startCamera();
+  });
+
+  document.getElementById('manualForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var input = document.getElementById('manualInput');
+    check(input.value);
+    input.select();
+  });
+
+  if (!getPass()) {
+    showMessage('bad', 'Access link needed', 'Open this page using the full access link you were given.');
+  }
+</script>
+</body>
+</html>
